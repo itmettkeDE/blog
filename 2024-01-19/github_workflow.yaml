@@ -1,0 +1,59 @@
+name: Deploy AWS infrastructure
+
+on:
+  push:
+    branches:
+      - "main"
+  workflow_dispatch:
+
+permissions:
+  # Allow repo checkout
+  contents: read
+  # Allow login to AWS via OIDC
+  id-token: write
+
+concurrency:
+  group: ${{ github.workflow }}
+
+env:
+  AWS_REGION: <REGION>
+  NODE_VERSION: 18
+  AWS_ACCOUNT_ID: <ACCOUNT_ID>
+  AWS_ROLE: arn:aws:iam::<ACCOUNT_ID>:role/openid-github-deploy
+  STACKS: <WHITESPACE_SEPERATED_CDK_STACKS>
+
+jobs:
+  cdk-deploy:
+    name: Deploy AWS infrastructure
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Get sources
+        uses: actions/checkout@v3
+
+      - name: Set up Node.js with caching
+        uses: actions/setup-node@v3
+        timeout-minutes: 5
+        continue-on-error: true
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: "yarn"
+          cache-dependency-path: "**/yarn.lock"
+
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@master
+        with:
+          role-to-assume: ${{ env.AWS_ROLE }}
+          role-session-name: ${{ github.repository_owner }}-${{ github.event.repository.name }}-github-ci-${{ github.job }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Install dependencies for AWS CDK
+        run: yarn install --frozen-lockfile
+
+      - name: CDK bootstrap
+        run: |
+          yarn cdk bootstrap aws://${AWS_ACCOUNT_ID}/${AWS_REGION}
+
+      - name: CDK deploy
+        run: |
+          yarn cdk deploy "${STACKS}" --concurrency 10
